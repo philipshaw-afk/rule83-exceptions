@@ -305,7 +305,7 @@ function shell(active, body, right = "") {
 async function loadDays(force) {
   if (S.days && !force) return S.days;
   const { data, error } = await sb.from("report_days")
-    .select("report_date, export_taken, uploaded_at, filings_checked, n_disc, n_late, n_opd, n_excluded")
+    .select("report_date, export_taken, uploaded_at, filings_checked, n_disc, n_late, n_opd, n_excluded, disc_checked")
     .order("report_date", { ascending: false });
   if (error) throw error;
   return (S.days = data || []);
@@ -374,6 +374,7 @@ async function pageDay(date) {
   const opd = rows.filter(r => r.opd).sort((a, b) => String(a.opd_deadline).localeCompare(String(b.opd_deadline)));
   const excl = rows.filter(r => r.excluded && r.would_be_late);
   const prev = days[i + 1], next = days[i - 1];
+  const discOk = day.disc_checked !== false;
   const dn = `<div class="daynav">
       ${prev ? `<a href="#/day/${prev.report_date}">&larr; ${fds(prev.report_date)}</a>` : `<span class="dis">&larr; Earlier</span>`}
       ${next ? `<a href="#/day/${next.report_date}">${fds(next.report_date)} &rarr;</a>` : `<span class="dis">Later &rarr;</span>`}
@@ -387,12 +388,12 @@ async function pageDay(date) {
       <p>Rule 8.3 disclosures announced <b>${fdl(d)}</b> with a net discrepancy, or filed after the 15:30 deadline.</p>${dn}</div>
       <div class="kpis">
         <div class="kpi"><span class="kv">${rows.length}</span><span class="kl">Filings checked</span></div>
-        <div class="kpi"><span class="kv r">${disc.length}</span><span class="kl">Net discrepancy</span></div>
+        <div class="kpi"><span class="kv r">${discOk ? disc.length : "–"}</span><span class="kl">Net discrepancy</span></div>
         <div class="kpi"><span class="kv am">${late.length}</span><span class="kl">Late</span></div>
         <div class="kpi"><span class="kv p">${opd.length}</span><span class="kl">Opening window</span></div>
       </div>
     </div>${warn}
-    ${card("Filings with a net discrepancy", disc.length, "Largest first", disc.length ? discTable(disc) : '<p class="empty">No discrepancies on this day.</p>',
+    ${card("Filings with a net discrepancy", discOk ? disc.length : "–", "Largest first", !discOk ? '<p class="muted">Not available for this day. Discrepancies are worked out by comparing each filing with the filer’s previous filing, and the filings before this day were not loaded.</p>' : disc.length ? discTable(disc) : '<p class="empty">No discrepancies on this day.</p>',
       "Flagged when the total net discrepancy is not zero. Total net holding is the filer’s disclosed total long position minus its total short position (number of securities and % of the class); the last column is the net discrepancy divided by that holding. Under each filer, <b>This filing &#8599;</b> opens the disclosure itself and <b>All filings &#8599;</b> the filer’s full trading record on the 8.3 Tracker (login required).")}
     ${card("Late filings", late.length, "Latest first", late.length ? lateTable(late) : '<p class="empty">No late filings on this day.</p>',
       "Deadline is <b>15:30 on the business day after the dealing date</b> (UK bank holidays skipped; Irish holidays for Irish Panel companies). A filing stamped 15:31:00 or later, or on a later day, is late. Amendments and positions calculated by M&amp;A Monitor are left out.")}
@@ -417,7 +418,7 @@ async function pageDay(date) {
 async function pageArchive() {
   const days = await loadDays(true);
   const rows = days.map(x => `<tr><td class="m"><a href="#/day/${x.report_date}"><b>${fdl(x.report_date)}</b></a></td>
-      <td class="r m">${x.filings_checked}</td><td class="r m">${x.n_disc ? `<span class="neg">${x.n_disc}</span>` : ZERO}</td>
+      <td class="r m">${x.filings_checked}</td><td class="r m">${x.disc_checked === false ? DASH : x.n_disc ? `<span class="neg">${x.n_disc}</span>` : ZERO}</td>
       <td class="r m">${x.n_late ? `<b style="color:var(--am)">${x.n_late}</b>` : ZERO}</td><td class="r m">${x.n_opd ? `<b style="color:var(--p)">${x.n_opd}</b>` : ZERO}</td>
       <td class="r m">${x.n_excluded || ZERO}</td></tr>`);
   const tot = k => days.reduce((s, x) => s + (x[k] || 0), 0);
