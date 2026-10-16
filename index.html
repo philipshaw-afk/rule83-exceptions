@@ -118,6 +118,9 @@ th[aria-sort=ascending] .ar .u,th[aria-sort=descending] .ar .d{opacity:1}
 th[aria-sort=ascending] .ar .d,th[aria-sort=descending] .ar .u{opacity:.15}
 .tg.amd{background:var(--al);color:var(--a);margin-left:3px}
 .stat.amd{background:var(--al);color:var(--a);border-color:rgba(79,110,247,.16)}
+.tg.pam{background:transparent;color:var(--am);box-shadow:inset 0 0 0 1px rgba(176,125,0,.45);margin-left:3px}
+.stat.pam{background:transparent;color:var(--am);border:1px dashed rgba(176,125,0,.55)}
+.nt i{color:var(--t3)}
 .tog{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:7px;border:1px solid var(--b);background:var(--glass);font-size:12px;font-weight:600;color:var(--t2);cursor:pointer;user-select:none}
 .tog:hover{color:var(--t)}
 .tog input{margin:0;width:14px;height:14px;accent-color:var(--a);cursor:pointer}
@@ -257,7 +260,7 @@ function authShell(title, sub, inner, fine = "") {
     <h1 id="ah">${title}</h1><p class="sub">${sub}</p>${inner}${fine ? `<p class="fine">${fine}</p>` : ""}</section></main>`;
 }
 function showLogin(msg) {
-  authShell("Filing exceptions", "Rule 8.3 disclosures with a net discrepancy or filed late, updated at 17:00 each business day.",
+  authShell("Filing exceptions", "Rule 8.3 disclosures with a net discrepancy or filed late, updated at 08:00, 12:00, 16:00 and 17:00 each business day.",
     `<form id="lf" novalidate>
       ${msg ? `<p class="msg err" role="alert">${esc(msg)}</p>` : ""}
       <div><label class="f" for="em">Email</label><input class="inp" id="em" type="email" autocomplete="username" required></div>
@@ -345,8 +348,16 @@ const card = (title, n, sub, body, foot, sid) =>
   `<section class="card"><div class="card-hd"><h2 class="card-t">${title} <span class="cnt">${n}</span></h2><span class="card-s"${sid ? ` id="${sid}"` : ""}>${sub}</span></div>${body}<div class="tfr">${foot}</div></section>`;
 const table = (head, rows) => `<div class="tscr"><table><thead><tr>${head}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 const isAmend = r => r.excluded === "Amendment";
-const AMEND_TAG = '<span class="tg amd" title="This filing amends an earlier filing">Amendment</span>';
-const who = (r, amend = true) => `<td class="fn">${esc(r.filer)}${amend && isAmend(r) ? " " + AMEND_TAG : ""}<br>${links(r)}</td>`;
+// Repeat filings (a second filing by the same filer in the same company for the same dealing date), worked out
+// by the daily job: "amendment" = same holding as the earlier filing, so treated as an amendment of it;
+// "possible amendment" = holding differs and the Tracker shows a discrepancy, so it may amend the earlier one.
+const isPossAmend = r => r.repeat === "possible amendment";
+const repOf = r => { const o = r.repeat_of; return o ? `the ${fds(o.rep_date)} filing${o.rns_no ? ` (${o.rns_no})` : ""}` : "an earlier filing"; };
+const amendTag = r => `<span class="tg amd" title="${esc(r.repeat === "amendment" ? `Second filing for the same dealing date with the same holding as ${repOf(r)}, so treated as an amendment of it` : "This filing amends an earlier filing")}">Amendment</span>`;
+const possTag = r => `<span class="tg pam" title="${esc(`Second filing for the same dealing date as ${repOf(r)}, with a different holding: it may amend that filing`)}">Possible amendment</span>`;
+const autoNote = r => r.repeat === "amendment" ? `Repeat of ${repOf(r)} for the same dealing date` :
+  isPossAmend(r) ? `Second filing for this dealing date (first: ${repOf(r)}) – may amend it` : "";
+const who = (r, amend = true) => `<td class="fn">${esc(r.filer)}${amend && isAmend(r) ? " " + amendTag(r) : ""}${amend && isPossAmend(r) ? " " + possTag(r) : ""}<br>${links(r)}</td>`;
 
 // Sortable tables. Each column: h = heading, k = sort key (blank keys always sort last),
 // t = "t" text | "n" number | "d" date (first click: A–Z, largest first, earliest first), r = right-aligned,
@@ -410,7 +421,7 @@ const COL = {
   co: { h: "Company dealt in", l: "company", k: r => r.target, td: r => `<td class="co">${esc(r.target)}${panelTag(r)}</td>` },
   dealt: (h = "Dealing date") => ({ h, l: "dealing date", t: "d", k: r => r.dealt, td: r => `<td class="m">${fd(r.dealt)}</td>` }),
   rep: { h: "Reported", l: "time reported", t: "d", k: repKey, td: r => `<td class="m">${rep(r)}</td>` },
-  notes: { h: "M&amp;A notes", l: "M&A notes", k: r => cap(r.note), td: r => `<td class="nt">${esc(cap(r.note)) || DASH}</td>` },
+  notes: { h: "M&amp;A notes", l: "M&A notes", k: r => cap(r.note) || autoNote(r), td: r => `<td class="nt">${r.note ? esc(cap(r.note)) : autoNote(r) ? `<i>${esc(autoNote(r))}</i>` : DASH}</td>` },
 };
 
 function discTable(rows) {
@@ -451,14 +462,15 @@ function exclTable(rows) {
     COL.notes,
   ], rows);
 }
-const flagScore = r => (r.disc ? 8 : 0) + (r.late ? 4 : 0) + (r.opd ? 2 : 0) + (isAmend(r) ? 1 : 0);
+const flagScore = r => (r.disc ? 8 : 0) + (r.late ? 4 : 0) + (r.opd ? 2 : 0) + (isAmend(r) || isPossAmend(r) ? 1 : 0);
 function allTable(rows) {
   return stable("all", [
     COL.filer(false), COL.co, COL.dealt(), COL.rep,
     { h: "Net discrepancy", t: "n", r: 1, k: r => absOrNull(r.net_disc), td: r => `<td class="r m">${fn(r.net_disc)}</td>` },
     { h: "Flags", t: "n", k: r => flagScore(r) || null, td: r => {
         const f = [r.disc ? '<span class="stat disc">Discrepancy</span>' : "", r.late ? P_LATE : "",
-          r.opd ? '<span class="stat opd">Opening window</span>' : "", isAmend(r) ? '<span class="stat amd">Amendment</span>' : ""].filter(Boolean).join(" ");
+          r.opd ? '<span class="stat opd">Opening window</span>' : "", isAmend(r) ? '<span class="stat amd">Amendment</span>' : "",
+          isPossAmend(r) ? `<span class="stat pam" title="${esc(autoNote(r))}">Possible amendment</span>` : ""].filter(Boolean).join(" ");
         return `<td>${f || DASH}</td>`; } },
   ], rows, null, r => ` data-q="${esc((r.filer + " " + r.target).toLowerCase())}"`);
 }
@@ -488,7 +500,7 @@ async function loadIeCounts(force) {
 async function pageDay(date) {
   const days = await loadDays();
   if (!days.length) {
-    shell("day", `<div class="phd"><div><h1>Filing exceptions</h1><p>No days have been published yet. The first update arrives at 17:00 on the next business day.</p></div></div>`);
+    shell("day", `<div class="phd"><div><h1>Filing exceptions</h1><p>No days have been published yet. The first update arrives at the next scheduled time (12:00, 16:00 or 17:00 on a business day).</p></div></div>`);
     return;
   }
   const d = date && days.find(x => x.report_date === date) ? date : days[0].report_date;
@@ -503,12 +515,19 @@ async function pageDay(date) {
   const excl = rows.filter(r => r.excluded && r.would_be_late);
   const prev = days[i + 1], next = days[i - 1];
   const discOk = day.disc_checked !== false;
+  // Part day: uploaded on the announcement date itself before the 17:00 run, so more filings are still to come
+  const upl = day.uploaded_at ? new Date(day.uploaded_at) : null;
+  const uDay = upl ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(upl) : "";
+  const uHM = upl ? new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(upl) : "";
+  const partDay = uDay === d && uHM < "17:00";
+  const nextUp = uHM < "12:00" ? "12:00" : uHM < "16:00" ? "16:00" : "17:00";
   const dn = `<div class="daynav">
       ${prev ? `<a href="#/day/${prev.report_date}">&larr; ${fds(prev.report_date)}</a>` : `<span class="dis">&larr; Earlier</span>`}
       ${next ? `<a href="#/day/${next.report_date}">${fds(next.report_date)} &rarr;</a>` : `<span class="dis">Later &rarr;</span>`}
       ${i === 0 ? `<span class="latest">Latest</span>` : `<a href="#/">Latest</a>`}
       <a href="#/archive">All days</a>${ieToggle(ieN)}</div>`;
-  const warn = (day.table_loaded === false ? `<p class="note"><b>Note.</b> The Takeover Panel disclosure tables could not be read for this day, so the opening-position allowance has not been applied.</p>` : "") +
+  const warn = (partDay ? `<p class="note"><b>Day in progress.</b> These figures cover the filings on the 8.3 Tracker at ${uHM}. The next update is at ${nextUp}${nextUp === "17:00" ? "" : " (then 17:00)"}, and the whole day is checked again at 08:00 on the next business day.</p>` : "") +
+    (day.table_loaded === false ? `<p class="note"><b>Note.</b> The Takeover Panel disclosure tables could not be read for this day, so the opening-position allowance has not been applied.</p>` : "") +
     (day.notes_present === false ? `<p class="note"><b>Note.</b> M&amp;A notes were missing from this day’s data, so amendments and positions calculated by M&amp;A Monitor could not be left out of the timing check.</p>` : "");
   const discBody = !discOk ? '<p class="muted">Not available for this day. Discrepancies are worked out by comparing each filing with the filer’s previous filing, and the filings before this day were not loaded.</p>' : disc.length ? discTable(disc) : '<p class="empty">No discrepancies on this day.</p>';
   const lateBody = late.length ? lateTable(late) : '<p class="empty">No late filings on this day.</p>';
@@ -524,9 +543,9 @@ async function pageDay(date) {
       </div>
     </div>${warn}
     ${card("Filings with a net discrepancy", discOk ? disc.length : "–", discOk && disc.length ? sortLabel(TB.disc) : "", discBody,
-      "Flagged when the total net discrepancy is not zero. Total net holding is the filer’s disclosed total long position minus its total short position (number of securities and % of the class); the last column is the net discrepancy divided by that holding. A filing marked <span class=\"tg amd\" style=\"margin-left:0\">Amendment</span> corrects an earlier filing. Under each filer, <b>This filing &#8599;</b> opens the disclosure itself and <b>All filings &#8599;</b> the filer’s full trading record on the 8.3 Tracker (login required). Click a column heading to sort.", "s-disc")}
+      "Flagged when the total net discrepancy is not zero. Total net holding is the filer’s disclosed total long position minus its total short position (number of securities and % of the class); the last column is the net discrepancy divided by that holding. A filing marked <span class=\"tg amd\" style=\"margin-left:0\">Amendment</span> corrects an earlier filing; <span class=\"tg pam\" style=\"margin-left:0\">Possible amendment</span> marks a second filing for the same dealing date whose holding differs from the first, so it may correct it. Under each filer, <b>This filing &#8599;</b> opens the disclosure itself and <b>All filings &#8599;</b> the filer’s full trading record on the 8.3 Tracker (login required). Click a column heading to sort.", "s-disc")}
     ${card("Late filings", late.length, late.length ? sortLabel(TB.late) : "", lateBody,
-      `Deadline is <b>15:30 on the business day after the dealing date</b> (UK bank holidays skipped${S.showIE ? "; Irish holidays for Irish Panel companies" : ""}). A filing stamped 15:37:00 or later (the 8.3 Tracker&#8217;s time stamp can run up to six minutes behind the RNS release), or on a later day, is late. Amendments and positions calculated by M&amp;A Monitor are left out.`, "s-late")}
+      `Deadline is <b>15:30 on the business day after the dealing date</b> (UK bank holidays skipped${S.showIE ? "; Irish holidays for Irish Panel companies" : ""}). A filing stamped 15:37:00 or later (the 8.3 Tracker&#8217;s time stamp can run up to six minutes behind the RNS release), or on a later day, is late. Amendments (including a second filing for the same dealing date that shows the same holding as the first) and positions calculated by M&amp;A Monitor are left out.`, "s-late")}
     ${card("Within the opening-position window", opd.length, S.showIE ? "UK and Irish Takeover Panel disclosure tables" : "UK Takeover Panel disclosure table", opd.length ? opdTable(opd) : '<p class="empty">None on this day.</p>',
       `These missed the next-business-day deadline, but the offer period began less than 10 business days before the filing, so an Opening Position Disclosure was still in time (Rule 8.3(a): <b>15:30 on the 10th business day</b> after the offer period commenced${S.showIE ? "; the Irish Takeover Rules set the same deadline for Irish Panel companies, counted in Irish business days" : ""}). Late only if the filing includes a dealing.`)}
     <details class="card"><summary>${excl.length} filing${excl.length === 1 ? "" : "s"} left out of the timing check (amendments and positions calculated by M&amp;A Monitor)</summary>
@@ -535,7 +554,7 @@ async function pageDay(date) {
       <div class="filter"><label class="sr" for="q">Filter filings</label><input class="inp" id="q" type="search" placeholder="Filter by filer or company…"><span class="card-s" id="qn"></span></div>
       ${allTable(rows)}
     </details>`,
-    `Data uploaded ${london(day.uploaded_at)} &middot; updates 17:00 each business day`);
+    `Data uploaded ${london(day.uploaded_at)} &middot; updates 08:00, 12:00, 16:00 and 17:00 each business day`);
   const q = document.getElementById("q"), qn = document.getElementById("qn");
   const applyQ = () => {
     const v = q.value.trim().toLowerCase(); let n = 0;
@@ -576,7 +595,7 @@ async function pageArchive() {
       <div class="kpi"><span class="kv am">${tot("late")}</span><span class="kl">Late filings</span></div></div></div>${ieWarn}
     <section class="card"><div class="card-hd"><h2 class="card-t">Published days <span class="cnt">${days.length}</span></h2><span class="card-s" id="s-days">${list.length ? sortLabel(TB.days) : ""}</span></div>
       ${tbl}
-    </section>`, "updates 17:00 each business day");
+    </section>`, "updates 08:00, 12:00, 16:00 and 17:00 each business day");
   bindIeToggle();
 }
 
